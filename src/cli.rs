@@ -82,4 +82,13 @@ pub enum Command {
         /// Task that is blocking (must be completed first)
         blocker_id: String,
     },
+
+    /// Run the daemon in foreground
+    Daemon,
+
+    /// Stop the running daemon
+    DaemonStop,
+
+    /// Check daemon status
+    DaemonStatus,
 }

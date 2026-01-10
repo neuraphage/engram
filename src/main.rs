@@ -2,7 +2,7 @@
 
 use clap::Parser;
 use colored::*;
-use engram::{EdgeKind, Status, Store};
+use engram::{Client, Daemon, DaemonConfig, EdgeKind, Status, Store, is_daemon_running};
 use eyre::{Context, Result};
 use log::info;
 use std::fs;
@@ -191,6 +191,43 @@ fn run(cli: Cli) -> Result<()> {
                 blocked_id.cyan(),
                 blocker_id.cyan()
             );
+        }
+
+        Command::Daemon => {
+            println!("{} Starting daemon for {}", "→".blue(), store_dir.display());
+
+            let config = DaemonConfig::new(&store_dir);
+            let mut daemon = Daemon::new(config).context("Failed to create daemon")?;
+
+            // Run daemon in async runtime
+            let rt = tokio::runtime::Runtime::new().context("Failed to create runtime")?;
+            rt.block_on(async { daemon.run().await }).context("Daemon error")?;
+        }
+
+        Command::DaemonStop => {
+            if !is_daemon_running(&store_dir) {
+                println!("{} Daemon is not running", "✗".red());
+                std::process::exit(1);
+            }
+
+            let mut client = Client::connect(&store_dir, false).context("Failed to connect to daemon")?;
+            client.shutdown().context("Failed to shutdown daemon")?;
+            println!("{} Daemon stopped", "✓".green());
+        }
+
+        Command::DaemonStatus => {
+            if is_daemon_running(&store_dir) {
+                println!("{} Daemon is running", "✓".green());
+
+                // Try to ping
+                if let Ok(mut client) = Client::connect(&store_dir, false)
+                    && client.ping().is_ok()
+                {
+                    println!("  {} Responding to requests", "✓".green());
+                }
+            } else {
+                println!("{} Daemon is not running", "✗".red());
+            }
         }
     }
 

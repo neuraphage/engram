@@ -33,6 +33,13 @@ mod storage;
 mod store;
 mod types;
 
+pub mod client;
+pub mod daemon;
+pub mod protocol;
+
 // Re-export public API
+pub use client::Client;
+pub use daemon::{Daemon, DaemonConfig, is_daemon_running, start_daemon};
+pub use protocol::{Request, Response};
 pub use store::{Store, StoreError};
 pub use types::{Edge, EdgeKind, Item, Status, ValidationError};
