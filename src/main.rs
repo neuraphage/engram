@@ -131,6 +131,20 @@ fn run(cli: Cli) -> Result<()> {
             }
         }
 
+        Command::Blocked => {
+            let store = Store::open(&store_dir).context("Failed to open store")?;
+            let items = store.blocked().context("Failed to get blocked items")?;
+
+            if items.is_empty() {
+                println!("{}", "No blocked items".dimmed());
+            } else {
+                println!("{} {} item(s) blocked:", "⊘".red(), items.len());
+                for item in items {
+                    println!("  {} P{} {}", item.id.cyan(), item.priority, item.title);
+                }
+            }
+        }
+
         Command::Close { id, reason } => {
             let mut store = Store::open(&store_dir).context("Failed to open store")?;
             let item = store.close(&id, reason.as_deref()).context("Failed to close item")?;
@@ -190,6 +204,20 @@ fn run(cli: Cli) -> Result<()> {
                 "✓".green(),
                 blocked_id.cyan(),
                 blocker_id.cyan()
+            );
+        }
+
+        Command::Child { parent_id, child_id } => {
+            let mut store = Store::open(&store_dir).context("Failed to open store")?;
+            store
+                .add_edge(&child_id, &parent_id, EdgeKind::ParentChild)
+                .context("Failed to add parent-child relationship")?;
+
+            println!(
+                "{} {} is now a child of {}",
+                "✓".green(),
+                child_id.cyan(),
+                parent_id.cyan()
             );
         }
 

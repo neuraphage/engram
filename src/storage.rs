@@ -545,6 +545,41 @@ impl Storage {
         Ok(items)
     }
 
+    /// Get items that are currently blocked.
+    /// Returns items that have at least one open blocker.
+    pub fn blocked(&self) -> Result<Vec<Item>> {
+        // Items that:
+        // 1. Are open or in_progress (not closed)
+        // 2. Have at least one blocking edge where the blocker is open/in_progress
+        let sql = r#"
+            SELECT DISTINCT i.id, i.title, i.description, i.status, i.priority,
+                   i.created_at, i.updated_at, i.closed_at, i.close_reason
+            FROM items i
+            JOIN edges e ON e.from_id = i.id
+            JOIN items blocker ON e.to_id = blocker.id
+            WHERE i.status IN ('open', 'in_progress', 'blocked')
+            AND e.kind = 'blocks'
+            AND blocker.status IN ('open', 'in_progress', 'blocked')
+            ORDER BY i.priority ASC, i.created_at ASC
+        "#;
+
+        let mut stmt = self.db.prepare(sql)?;
+        let mut items: Vec<Item> = stmt.query_map([], Self::row_to_item)?.filter_map(|r| r.ok()).collect();
+
+        // Load labels for each item
+        for item in &mut items {
+            let mut label_stmt = self
+                .db
+                .prepare("SELECT label FROM labels WHERE item_id = ? ORDER BY label")?;
+            item.labels = label_stmt
+                .query_map(params![item.id], |row| row.get(0))?
+                .filter_map(|r| r.ok())
+                .collect();
+        }
+
+        Ok(items)
+    }
+
     /// Check if an edge exists.
     pub fn edge_exists(&self, from_id: &str, to_id: &str, kind: EdgeKind) -> Result<bool> {
         let kind_str = match kind {

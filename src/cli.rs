@@ -52,6 +52,9 @@ pub enum Command {
     /// Show tasks that are ready to work on
     Ready,
 
+    /// Show tasks that are currently blocked
+    Blocked,
+
     /// Close a task
     Close {
         /// Task ID
@@ -81,6 +84,15 @@ pub enum Command {
 
         /// Task that is blocking (must be completed first)
         blocker_id: String,
+    },
+
+    /// Add a parent-child relationship
+    Child {
+        /// Parent task ID
+        parent_id: String,
+
+        /// Child task ID
+        child_id: String,
     },
 
     /// Run the daemon in foreground

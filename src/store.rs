@@ -197,6 +197,11 @@ impl Store {
         self.storage.ready()
     }
 
+    /// Get items that are currently blocked.
+    pub fn blocked(&self) -> Result<Vec<Item>> {
+        self.storage.blocked()
+    }
+
     /// Add an edge between items.
     pub fn add_edge(&mut self, from_id: &str, to_id: &str, kind: EdgeKind) -> Result<Edge> {
         // No self-referential edges

@@ -211,6 +211,17 @@ impl Client {
         }
     }
 
+    /// Get blocked items.
+    pub fn blocked(&mut self) -> Result<Vec<Item>> {
+        let response = self.request(Request::Blocked)?;
+
+        match response {
+            Response::Items { items } => Ok(items),
+            Response::Error { message } => bail!("{}", message),
+            _ => bail!("Unexpected response"),
+        }
+    }
+
     /// Flush pending writes to disk.
     pub fn flush(&mut self) -> Result<()> {
         let response = self.request(Request::Flush)?;

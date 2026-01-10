@@ -53,6 +53,9 @@ pub enum Request {
     /// Get ready items (unblocked, open).
     Ready,
 
+    /// Get blocked items (have open blockers).
+    Blocked,
+
     /// Force flush pending writes to disk.
     Flush,
 

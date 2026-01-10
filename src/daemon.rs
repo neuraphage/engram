@@ -289,6 +289,11 @@ impl Daemon {
                 Err(e) => Response::error(e.to_string()),
             },
 
+            Request::Blocked => match self.store.blocked() {
+                Ok(items) => Response::Items { items },
+                Err(e) => Response::error(e.to_string()),
+            },
+
             Request::Flush => {
                 // Currently a no-op since writes are immediate
                 // In future, this would flush any pending buffered writes
