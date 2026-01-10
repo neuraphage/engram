@@ -33,13 +33,23 @@ mod storage;
 mod store;
 mod types;
 
+pub mod batch;
+pub mod builder;
 pub mod client;
+pub mod compact;
 pub mod daemon;
 pub mod protocol;
+pub mod query;
+pub mod vacuum;
 
 // Re-export public API
+pub use batch::{BatchCloseResult, BatchCreateResult, CreateSpec, StoreBatchExt};
+pub use builder::{ItemBuilder, StoreBuilderExt};
 pub use client::Client;
+pub use compact::{CompactConfig, CompactResult, StoreCompactExt};
 pub use daemon::{Daemon, DaemonConfig, is_daemon_running, start_daemon};
 pub use protocol::{Request, Response};
+pub use query::{Query, StoreQueryExt};
 pub use store::{Store, StoreError};
-pub use types::{Edge, EdgeKind, Item, Status, ValidationError};
+pub use types::{Edge, EdgeKind, Filter, Item, Status, ValidationError};
+pub use vacuum::{VacuumResult, vacuum};

@@ -633,6 +633,187 @@ impl Storage {
         Ok(edges)
     }
 
+    /// Query items with flexible filtering.
+    pub fn query_items(&self, filter: &crate::types::Filter) -> Result<Vec<Item>> {
+        let mut sql = String::from(
+            r#"
+            SELECT DISTINCT i.id, i.title, i.description, i.status, i.priority,
+                   i.created_at, i.updated_at, i.closed_at, i.close_reason
+            FROM items i
+            "#,
+        );
+
+        let mut conditions = Vec::new();
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        // Join labels table if filtering by label
+        if filter.labels.is_some() {
+            sql.push_str("JOIN labels l ON i.id = l.item_id ");
+        }
+
+        // Status filter
+        if let Some(ref status) = filter.status {
+            let status_str = match status {
+                Status::Open => "open",
+                Status::InProgress => "in_progress",
+                Status::Blocked => "blocked",
+                Status::Closed => "closed",
+            };
+            conditions.push("i.status = ?".to_string());
+            params.push(Box::new(status_str.to_string()));
+        }
+
+        // Label filter
+        if let Some(ref labels) = filter.labels
+            && !labels.is_empty()
+        {
+            let placeholders: Vec<_> = labels.iter().map(|_| "?").collect();
+            conditions.push(format!("l.label IN ({})", placeholders.join(", ")));
+            for label in labels {
+                params.push(Box::new(label.clone()));
+            }
+        }
+
+        // Priority filters
+        if let Some(min_p) = filter.min_priority {
+            conditions.push("i.priority >= ?".to_string());
+            params.push(Box::new(min_p as i64));
+        }
+        if let Some(max_p) = filter.max_priority {
+            conditions.push("i.priority <= ?".to_string());
+            params.push(Box::new(max_p as i64));
+        }
+
+        // Title filter
+        if let Some(ref title_sub) = filter.title_contains {
+            conditions.push("LOWER(i.title) LIKE ?".to_string());
+            params.push(Box::new(format!("%{}%", title_sub.to_lowercase())));
+        }
+
+        // Build WHERE clause
+        if !conditions.is_empty() {
+            sql.push_str("WHERE ");
+            sql.push_str(&conditions.join(" AND "));
+        }
+
+        // Order by priority and created_at
+        sql.push_str(" ORDER BY i.priority ASC, i.created_at ASC");
+
+        // Limit and offset (SQLite requires LIMIT before OFFSET)
+        match (filter.limit, filter.offset) {
+            (Some(limit), Some(offset)) => {
+                sql.push_str(&format!(" LIMIT {} OFFSET {}", limit, offset));
+            }
+            (Some(limit), None) => {
+                sql.push_str(&format!(" LIMIT {}", limit));
+            }
+            (None, Some(offset)) => {
+                // SQLite needs LIMIT for OFFSET to work, use -1 for unlimited
+                sql.push_str(&format!(" LIMIT -1 OFFSET {}", offset));
+            }
+            (None, None) => {}
+        }
+
+        let mut stmt = self.db.prepare(&sql)?;
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let mut items: Vec<Item> = stmt
+            .query_map(param_refs.as_slice(), Self::row_to_item)?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        // Load labels for each item
+        for item in &mut items {
+            let mut label_stmt = self
+                .db
+                .prepare("SELECT label FROM labels WHERE item_id = ? ORDER BY label")?;
+            item.labels = label_stmt
+                .query_map(params![item.id], |row| row.get(0))?
+                .filter_map(|r| r.ok())
+                .collect();
+        }
+
+        Ok(items)
+    }
+
+    /// Run SQLite VACUUM to reclaim space.
+    pub fn vacuum(&self) -> Result<()> {
+        self.db.execute("VACUUM", [])?;
+        Ok(())
+    }
+
+    /// Count all items in the store.
+    pub fn count_all_items(&self) -> Result<usize> {
+        let count: i64 = self.db.query_row("SELECT COUNT(*) FROM items", [], |row| row.get(0))?;
+        Ok(count as usize)
+    }
+
+    /// Count all edges in the store.
+    pub fn count_all_edges(&self) -> Result<usize> {
+        let count: i64 = self.db.query_row("SELECT COUNT(*) FROM edges", [], |row| row.get(0))?;
+        Ok(count as usize)
+    }
+
+    /// Count items matching the filter.
+    pub fn count_items(&self, filter: &crate::types::Filter) -> Result<usize> {
+        let mut sql = String::from("SELECT COUNT(DISTINCT i.id) FROM items i ");
+
+        let mut conditions = Vec::new();
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        // Join labels table if filtering by label
+        if filter.labels.is_some() {
+            sql.push_str("JOIN labels l ON i.id = l.item_id ");
+        }
+
+        // Status filter
+        if let Some(ref status) = filter.status {
+            let status_str = match status {
+                Status::Open => "open",
+                Status::InProgress => "in_progress",
+                Status::Blocked => "blocked",
+                Status::Closed => "closed",
+            };
+            conditions.push("i.status = ?".to_string());
+            params.push(Box::new(status_str.to_string()));
+        }
+
+        // Label filter
+        if let Some(labels) = filter.labels.as_ref().filter(|l| !l.is_empty()) {
+            let placeholders: Vec<_> = labels.iter().map(|_| "?").collect();
+            conditions.push(format!("l.label IN ({})", placeholders.join(", ")));
+            for label in labels {
+                params.push(Box::new(label.clone()));
+            }
+        }
+
+        // Priority filters
+        if let Some(min_p) = filter.min_priority {
+            conditions.push("i.priority >= ?".to_string());
+            params.push(Box::new(min_p as i64));
+        }
+        if let Some(max_p) = filter.max_priority {
+            conditions.push("i.priority <= ?".to_string());
+            params.push(Box::new(max_p as i64));
+        }
+
+        // Title filter
+        if let Some(ref title_sub) = filter.title_contains {
+            conditions.push("LOWER(i.title) LIKE ?".to_string());
+            params.push(Box::new(format!("%{}%", title_sub.to_lowercase())));
+        }
+
+        // Build WHERE clause
+        if !conditions.is_empty() {
+            sql.push_str("WHERE ");
+            sql.push_str(&conditions.join(" AND "));
+        }
+
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let count: i64 = self.db.query_row(&sql, param_refs.as_slice(), |row| row.get(0))?;
+
+        Ok(count as usize)
+    }
+
     /// Convert a database row to an Item.
     fn row_to_item(row: &rusqlite::Row) -> rusqlite::Result<Item> {
         let status_str: String = row.get(3)?;

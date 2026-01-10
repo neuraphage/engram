@@ -57,6 +57,11 @@ impl Store {
         Ok(Self { storage })
     }
 
+    /// Get a reference to the underlying storage.
+    pub fn storage(&self) -> &Storage {
+        &self.storage
+    }
+
     /// Create a new item.
     pub fn create(&mut self, title: &str, priority: u8, labels: &[&str], description: Option<&str>) -> Result<Item> {
         let now = Utc::now();

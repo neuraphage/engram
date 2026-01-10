@@ -199,6 +199,88 @@ impl Item {
     }
 }
 
+/// Filter criteria for querying items.
+#[derive(Debug, Clone, Default)]
+pub struct Filter {
+    /// Filter by status.
+    pub status: Option<Status>,
+    /// Filter by labels (any match).
+    pub labels: Option<Vec<String>>,
+    /// Filter by minimum priority (inclusive).
+    pub min_priority: Option<u8>,
+    /// Filter by maximum priority (inclusive).
+    pub max_priority: Option<u8>,
+    /// Filter by title substring (case-insensitive).
+    pub title_contains: Option<String>,
+    /// Limit number of results.
+    pub limit: Option<usize>,
+    /// Skip first N results.
+    pub offset: Option<usize>,
+}
+
+impl Filter {
+    /// Create a new empty filter.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Filter by status.
+    pub fn status(mut self, status: Status) -> Self {
+        self.status = Some(status);
+        self
+    }
+
+    /// Filter by label (items must have this label).
+    pub fn label(mut self, label: impl Into<String>) -> Self {
+        self.labels.get_or_insert_with(Vec::new).push(label.into());
+        self
+    }
+
+    /// Filter by multiple labels (items must have any of these).
+    pub fn labels(mut self, labels: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        let label_vec = self.labels.get_or_insert_with(Vec::new);
+        label_vec.extend(labels.into_iter().map(|l| l.into()));
+        self
+    }
+
+    /// Filter by minimum priority (0=critical).
+    pub fn min_priority(mut self, priority: u8) -> Self {
+        self.min_priority = Some(priority);
+        self
+    }
+
+    /// Filter by maximum priority (4=low).
+    pub fn max_priority(mut self, priority: u8) -> Self {
+        self.max_priority = Some(priority);
+        self
+    }
+
+    /// Filter by priority range (inclusive).
+    pub fn priority_range(mut self, min: u8, max: u8) -> Self {
+        self.min_priority = Some(min);
+        self.max_priority = Some(max);
+        self
+    }
+
+    /// Filter by title substring (case-insensitive).
+    pub fn title_contains(mut self, substring: impl Into<String>) -> Self {
+        self.title_contains = Some(substring.into());
+        self
+    }
+
+    /// Limit results.
+    pub fn limit(mut self, limit: usize) -> Self {
+        self.limit = Some(limit);
+        self
+    }
+
+    /// Skip first N results.
+    pub fn offset(mut self, offset: usize) -> Self {
+        self.offset = Some(offset);
+        self
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
