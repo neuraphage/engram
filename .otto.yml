@@ -86,37 +86,54 @@ tasks:
       cargo install --path .
       echo "✅ Binary installed to ~/.cargo/bin"
 
-  # Run CLI examples
-  examples:
-    help: "Run all CLI usage examples"
+  # Build for examples (shared dependency)
+  build-for-examples:
+    help: "Build release binary for examples"
     bash: |
-      echo "=== Running Engram CLI Examples ==="
-      echo ""
-
-      # Build release binary
-      echo "Building engram binary..."
       cargo build --release --quiet
+      echo "✅ Binary built"
+
+  # Run CLI examples in parallel using foreach
+  examples:
+    help: "Run all CLI usage examples in parallel"
+    before: [build-for-examples]
+    foreach:
+      glob: "examples/*.sh"
+      as: example
+      parallel: true
+    bash: |
+      name=$(basename "${example}")
       export PATH="$PWD/target/release:$PATH"
-      echo ""
+      export EXAMPLE_DIR=$(mktemp -d)
+      trap "rm -rf $EXAMPLE_DIR" EXIT
 
-      # Run each example
-      failed=0
-      for example in examples/*.sh; do
-        name=$(basename "$example")
-        echo "--- Running $name ---"
-        if EXAMPLE_DIR=$(mktemp -d) bash "$example"; then
-          echo "✅ $name passed"
-        else
-          echo "❌ $name failed"
-          failed=$((failed + 1))
-        fi
-        echo ""
-      done
-
-      if [ $failed -eq 0 ]; then
-        echo "✅ All examples passed!"
+      if bash "${example}"; then
+        echo "✅ $name passed"
       else
-        echo "❌ $failed example(s) failed"
+        echo "❌ $name failed"
         exit 1
       fi
+
+  # Run examples sequentially (for debugging)
+  examples-serial:
+    help: "Run all CLI usage examples sequentially"
+    before: [build-for-examples]
+    foreach:
+      glob: "examples/*.sh"
+      as: example
+      parallel: false
+    bash: |
+      name=$(basename "${example}")
+      export PATH="$PWD/target/release:$PATH"
+      export EXAMPLE_DIR=$(mktemp -d)
+      trap "rm -rf $EXAMPLE_DIR" EXIT
+
+      echo "--- Running $name ---"
+      if bash "${example}"; then
+        echo "✅ $name passed"
+      else
+        echo "❌ $name failed"
+        exit 1
+      fi
+      echo ""
 
