@@ -31,12 +31,20 @@ echo
 rm -rf .engram
 engram init
 
-echo "--- With Daemon (persistent connection) ---"
-echo "Starting daemon..."
+echo "--- Check Daemon Status (before starting) ---"
+engram daemon-status || true
+echo
+
+echo "--- Start Daemon ---"
 engram daemon &
 DAEMON_PID=$!
 sleep 1  # Give daemon time to start
 
+echo "--- Check Daemon Status (after starting) ---"
+engram daemon-status || true
+echo
+
+echo "--- With Daemon (persistent connection) ---"
 echo "Creating tasks with daemon running..."
 time (
     engram create "Task A" --priority 2
@@ -62,17 +70,21 @@ echo "--- Final Task List ---"
 engram list
 echo
 
-# Clean up daemon
+# Clean up daemon using proper command
 echo "--- Stopping Daemon ---"
-kill $DAEMON_PID 2>/dev/null || true
+engram daemon-stop || kill $DAEMON_PID 2>/dev/null || true
 wait $DAEMON_PID 2>/dev/null || true
-echo "Daemon stopped."
+echo
+
+echo "--- Check Daemon Status (after stopping) ---"
+engram daemon-status || true
 echo
 
 echo "=== Example Complete ==="
 echo
 echo "Key points:"
 echo "  - 'engram daemon' starts background service"
+echo "  - 'engram daemon-status' checks if daemon is running"
+echo "  - 'engram daemon-stop' gracefully stops daemon"
 echo "  - Daemon handles concurrent access safely"
 echo "  - Better performance for many operations"
-echo "  - Kill daemon when done or it auto-exits on idle"
