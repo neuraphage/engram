@@ -1,0 +1,9 @@
+# Ignore engram data directories created by examples
+.engram/
+
+# Ignore any nested git repos
+**/.git/
+
+# Ignore temp directories that examples might create
+tmp/
+temp/
