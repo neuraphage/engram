@@ -61,9 +61,9 @@ echo "--- All Tasks ---"
 engram list
 echo
 
-# View each task
-RATE_ID=$(engram list | grep "rate limiting" | awk '{print $2}')
-DB_ID=$(engram list | grep "migration" | awk '{print $2}')
+# View each task (grep for status prefix to avoid matching description text)
+RATE_ID=$(engram list | grep "^open.*rate limiting" | awk '{print $2}')
+DB_ID=$(engram list | grep "^open.*migration" | awk '{print $2}')
 
 echo "--- Rate Limiting Details ---"
 engram get "$RATE_ID"

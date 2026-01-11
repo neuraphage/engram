@@ -40,10 +40,10 @@ engram create "B: Implement backend" --priority 2 --labels "backend"
 engram create "C: Implement frontend" --priority 2 --labels "frontend"
 engram create "D: Integration test" --priority 2 --labels "testing"
 
-A=$(engram list | grep "Design API" | awk '{print $2}')
-B=$(engram list | grep "backend" | awk '{print $2}')
-C=$(engram list | grep "frontend" | awk '{print $2}')
-D=$(engram list | grep "Integration" | awk '{print $2}')
+A=$(engram list | grep "^open.*A: Design" | awk '{print $2}')
+B=$(engram list | grep "^open.*B: Implement" | awk '{print $2}')
+C=$(engram list | grep "^open.*C: Implement" | awk '{print $2}')
+D=$(engram list | grep "^open.*D: Integration" | awk '{print $2}')
 
 # Set up diamond
 engram block "$B" "$A"  # B blocked by A
@@ -100,11 +100,11 @@ engram create "G: Implement" --priority 2 --labels "implement"
 engram create "H: Review" --priority 2 --labels "review"
 engram create "I: Deploy" --priority 2 --labels "deploy"
 
-E=$(engram list | grep "Research" | awk '{print $2}')
-F=$(engram list | grep "Prototype" | awk '{print $2}')
-G=$(engram list | grep "Implement" | awk '{print $2}')
-H=$(engram list | grep "Review" | awk '{print $2}')
-I=$(engram list | grep "Deploy" | awk '{print $2}')
+E=$(engram list | grep "^open.*E: Research" | awk '{print $2}')
+F=$(engram list | grep "^open.*F: Prototype" | awk '{print $2}')
+G=$(engram list | grep "^open.*G: Implement" | awk '{print $2}')
+H=$(engram list | grep "^open.*H: Review" | awk '{print $2}')
+I=$(engram list | grep "^open.*I: Deploy" | awk '{print $2}')
 
 engram block "$F" "$E"
 engram block "$G" "$F"
