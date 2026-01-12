@@ -103,4 +103,30 @@ pub enum Command {
 
     /// Check daemon status
     DaemonStatus,
+
+    /// List recent events
+    Events {
+        /// Filter by event kind
+        #[arg(short, long)]
+        kind: Option<String>,
+
+        /// Filter by source task ID
+        #[arg(short, long)]
+        source: Option<String>,
+
+        /// Filter by target task ID
+        #[arg(short = 'T', long)]
+        target: Option<String>,
+
+        /// Maximum number of events to show
+        #[arg(short, long, default_value = "50")]
+        limit: usize,
+
+        /// Show events since (ISO 8601 timestamp)
+        #[arg(long)]
+        since: Option<String>,
+    },
+
+    /// Show event counts by kind
+    EventCounts,
 }

@@ -2,7 +2,7 @@
 
 use clap::Parser;
 use colored::*;
-use engram::{Client, Daemon, DaemonConfig, EdgeKind, Status, Store, is_daemon_running};
+use engram::{Client, Daemon, DaemonConfig, EdgeKind, Status, Store, StoreEventExt, is_daemon_running};
 use eyre::{Context, Result};
 use log::info;
 use std::fs;
@@ -255,6 +255,80 @@ fn run(cli: Cli) -> Result<()> {
                 }
             } else {
                 println!("{} Daemon is not running", "✗".red());
+            }
+        }
+
+        Command::Events {
+            kind,
+            source,
+            target,
+            limit,
+            since,
+        } => {
+            let store = Store::open(&store_dir).context("Failed to open store")?;
+
+            // Build query using builder pattern
+            let mut query = store.event_query();
+            if let Some(k) = kind {
+                query = query.kind(k);
+            }
+            if let Some(s) = source {
+                query = query.source(s);
+            }
+            if let Some(t) = target {
+                query = query.target(t);
+            }
+            if let Some(since_str) = since {
+                let ts = chrono::DateTime::parse_from_rfc3339(&since_str)
+                    .context("Invalid timestamp format (use ISO 8601, e.g., 2024-01-01T00:00:00Z)")?
+                    .with_timezone(&chrono::Utc);
+                query = query.since(ts);
+            }
+            query = query.limit(limit);
+
+            let events = query.execute().context("Failed to query events")?;
+
+            if events.is_empty() {
+                println!("{}", "No events found".dimmed());
+            } else {
+                println!("{} {} event(s):", "→".blue(), events.len());
+                println!();
+                for event in events {
+                    let source_str = event.source_task.as_deref().unwrap_or("-");
+                    let target_str = event.target_task.as_deref().unwrap_or("-");
+                    let time = event.timestamp.format("%Y-%m-%d %H:%M:%S");
+
+                    println!(
+                        "  {} {} {} → {}",
+                        time.to_string().dimmed(),
+                        event.kind.cyan(),
+                        source_str,
+                        target_str
+                    );
+                    if !event.payload.is_null() {
+                        println!("    {}", event.payload.to_string().dimmed());
+                    }
+                }
+            }
+        }
+
+        Command::EventCounts => {
+            let store = Store::open(&store_dir).context("Failed to open store")?;
+            let counts = store.event_counts().context("Failed to get event counts")?;
+
+            if counts.total == 0 {
+                println!("{}", "No events recorded".dimmed());
+            } else {
+                println!("{} {} total event(s):", "→".blue(), counts.total);
+                println!();
+
+                // Sort by count descending
+                let mut kinds: Vec<_> = counts.by_kind.iter().collect();
+                kinds.sort_by(|a, b| b.1.cmp(a.1));
+
+                for (kind, count) in kinds {
+                    println!("  {:30} {}", kind.cyan(), count);
+                }
             }
         }
     }
