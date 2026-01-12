@@ -28,7 +28,7 @@
 //! store.close(&task1.id, Some("Implemented OAuth")).unwrap();
 //! ```
 
-mod id;
+pub mod id;
 mod storage;
 mod store;
 mod types;
@@ -48,8 +48,9 @@ pub use builder::{ItemBuilder, StoreBuilderExt};
 pub use client::Client;
 pub use compact::{CompactConfig, CompactResult, StoreCompactExt};
 pub use daemon::{Daemon, DaemonConfig, is_daemon_running, start_daemon};
+pub use id::generate_event_id;
 pub use protocol::{Request, Response};
 pub use query::{Query, StoreQueryExt};
 pub use store::{Store, StoreError};
-pub use types::{Edge, EdgeKind, Filter, Item, Status, ValidationError};
+pub use types::{Edge, EdgeKind, Event, EventFilter, Filter, Item, Status, ValidationError};
 pub use vacuum::{VacuumResult, vacuum};

@@ -199,6 +199,90 @@ impl Item {
     }
 }
 
+/// A coordination event in the system.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Event {
+    /// Unique event ID (eg-evt-XXXXXXXXXX).
+    pub id: String,
+
+    /// Kind of event.
+    pub kind: String,
+
+    /// Source task ID (if applicable).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_task: Option<String>,
+
+    /// Target task ID (if applicable).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_task: Option<String>,
+
+    /// Event payload (JSON).
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+    pub payload: serde_json::Value,
+
+    /// When the event occurred.
+    pub timestamp: DateTime<Utc>,
+}
+
+/// Filter for querying events.
+#[derive(Debug, Clone, Default)]
+pub struct EventFilter {
+    /// Filter by event kinds.
+    pub kinds: Option<Vec<String>>,
+    /// Filter by source task.
+    pub source_task: Option<String>,
+    /// Filter by target task.
+    pub target_task: Option<String>,
+    /// Filter by timestamp (events after this time).
+    pub since: Option<DateTime<Utc>>,
+    /// Maximum number of results.
+    pub limit: Option<usize>,
+}
+
+impl EventFilter {
+    /// Create a new empty filter.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Filter by event kind.
+    pub fn kind(mut self, kind: impl Into<String>) -> Self {
+        self.kinds.get_or_insert_with(Vec::new).push(kind.into());
+        self
+    }
+
+    /// Filter by multiple event kinds.
+    pub fn kinds(mut self, kinds: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        let kind_vec = self.kinds.get_or_insert_with(Vec::new);
+        kind_vec.extend(kinds.into_iter().map(|k| k.into()));
+        self
+    }
+
+    /// Filter by source task.
+    pub fn source(mut self, task_id: impl Into<String>) -> Self {
+        self.source_task = Some(task_id.into());
+        self
+    }
+
+    /// Filter by target task.
+    pub fn target(mut self, task_id: impl Into<String>) -> Self {
+        self.target_task = Some(task_id.into());
+        self
+    }
+
+    /// Filter by timestamp (events after this time).
+    pub fn since(mut self, timestamp: DateTime<Utc>) -> Self {
+        self.since = Some(timestamp);
+        self
+    }
+
+    /// Limit results.
+    pub fn limit(mut self, limit: usize) -> Self {
+        self.limit = Some(limit);
+        self
+    }
+}
+
 /// Filter criteria for querying items.
 #[derive(Debug, Clone, Default)]
 pub struct Filter {
@@ -407,5 +491,36 @@ mod tests {
         let json = serde_json::to_string(&edge).unwrap();
         let deserialized: Edge = serde_json::from_str(&json).unwrap();
         assert_eq!(edge, deserialized);
+    }
+
+    #[test]
+    fn test_event_serialization_roundtrip() {
+        let event = Event {
+            id: "eg-evt-test1234".to_string(),
+            kind: "task_started".to_string(),
+            source_task: Some("eg-abc123".to_string()),
+            target_task: None,
+            payload: serde_json::json!({"summary": "Test"}),
+            timestamp: Utc::now(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let deserialized: Event = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, deserialized);
+    }
+
+    #[test]
+    fn test_event_filter_builder() {
+        let filter = EventFilter::new()
+            .kind("task_started")
+            .kind("task_completed")
+            .source("eg-abc123")
+            .limit(10);
+
+        assert_eq!(
+            filter.kinds,
+            Some(vec!["task_started".to_string(), "task_completed".to_string()])
+        );
+        assert_eq!(filter.source_task, Some("eg-abc123".to_string()));
+        assert_eq!(filter.limit, Some(10));
     }
 }

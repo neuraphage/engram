@@ -1,8 +1,8 @@
 //! High-level store API for Engram.
 
-use crate::id::generate_id;
+use crate::id::{generate_event_id, generate_id};
 use crate::storage::Storage;
-use crate::types::{Edge, EdgeKind, Item, Status, ValidationError};
+use crate::types::{Edge, EdgeKind, Event, EventFilter, Item, Status, ValidationError};
 use chrono::Utc;
 use eyre::{Context, Result};
 use std::collections::HashSet;
@@ -291,6 +291,59 @@ impl Store {
 
         Ok(false)
     }
+
+    // === Event API ===
+
+    /// Record an event.
+    pub fn record_event(
+        &mut self,
+        kind: &str,
+        source_task: Option<&str>,
+        target_task: Option<&str>,
+        payload: serde_json::Value,
+    ) -> Result<Event> {
+        let now = Utc::now();
+        let id = generate_event_id(kind, now);
+
+        let event = Event {
+            id,
+            kind: kind.to_string(),
+            source_task: source_task.map(String::from),
+            target_task: target_task.map(String::from),
+            payload,
+            timestamp: now,
+        };
+
+        self.storage.append_event(&event).context("Failed to persist event")?;
+
+        Ok(event)
+    }
+
+    /// Record an event from an existing Event struct (e.g., from external source).
+    pub fn record_event_raw(&mut self, event: &Event) -> Result<()> {
+        self.storage.append_event(event).context("Failed to persist event")?;
+        Ok(())
+    }
+
+    /// Get an event by ID.
+    pub fn get_event(&self, id: &str) -> Result<Option<Event>> {
+        self.storage.get_event(id)
+    }
+
+    /// Query events with filters.
+    pub fn query_events(&self, filter: EventFilter) -> Result<Vec<Event>> {
+        self.storage.query_events(&filter)
+    }
+
+    /// Get recent events.
+    pub fn recent_events(&self, limit: usize) -> Result<Vec<Event>> {
+        self.storage.recent_events(limit)
+    }
+
+    /// Get events for a specific task (as source or target).
+    pub fn task_events(&self, task_id: &str, limit: usize) -> Result<Vec<Event>> {
+        self.storage.task_events(task_id, limit)
+    }
 }
 
 #[cfg(test)]
@@ -431,5 +484,55 @@ mod tests {
         // Should not cause issues
         let ready = store.ready().unwrap();
         assert_eq!(ready.len(), 1);
+    }
+
+    #[test]
+    fn test_record_and_get_event() {
+        let (_temp_dir, mut store) = setup_test_store();
+
+        let task = store.create("Test task", 2, &[], None).unwrap();
+        let event = store
+            .record_event(
+                "task_started",
+                Some(&task.id),
+                None,
+                serde_json::json!({"summary": "Started test task"}),
+            )
+            .unwrap();
+
+        assert!(event.id.starts_with("eg-evt-"));
+        assert_eq!(event.kind, "task_started");
+        assert_eq!(event.source_task, Some(task.id.clone()));
+
+        let retrieved = store.get_event(&event.id).unwrap();
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().kind, "task_started");
+    }
+
+    #[test]
+    fn test_query_events() {
+        let (_temp_dir, mut store) = setup_test_store();
+
+        let task1 = store.create("Task 1", 2, &[], None).unwrap();
+        let task2 = store.create("Task 2", 2, &[], None).unwrap();
+
+        store
+            .record_event("task_started", Some(&task1.id), None, serde_json::json!({}))
+            .unwrap();
+        store
+            .record_event("task_completed", Some(&task1.id), None, serde_json::json!({}))
+            .unwrap();
+        store
+            .record_event("task_started", Some(&task2.id), None, serde_json::json!({}))
+            .unwrap();
+
+        let recent = store.recent_events(10).unwrap();
+        assert_eq!(recent.len(), 3);
+
+        let task1_events = store.task_events(&task1.id, 10).unwrap();
+        assert_eq!(task1_events.len(), 2);
+
+        let started = store.query_events(EventFilter::new().kind("task_started")).unwrap();
+        assert_eq!(started.len(), 2);
     }
 }

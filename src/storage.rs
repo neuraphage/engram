@@ -1,6 +1,6 @@
 //! Storage layer for Engram: JSONL files + SQLite cache.
 
-use crate::types::{Edge, EdgeKind, Item, Status};
+use crate::types::{Edge, EdgeKind, Event, EventFilter, Item, Status};
 use eyre::{Context, Result};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::collections::HashMap;
@@ -16,6 +16,9 @@ const ITEMS_FILE: &str = "items.jsonl";
 
 /// JSONL file for edges.
 const EDGES_FILE: &str = "edges.jsonl";
+
+/// JSONL file for events.
+const EVENTS_FILE: &str = "events.jsonl";
 
 /// SQLite database file.
 const DB_FILE: &str = "engram.db";
@@ -35,12 +38,16 @@ impl Storage {
         // Create empty JSONL files if they don't exist
         let items_path = engram_dir.join(ITEMS_FILE);
         let edges_path = engram_dir.join(EDGES_FILE);
+        let events_path = engram_dir.join(EVENTS_FILE);
 
         if !items_path.exists() {
             File::create(&items_path).context("Failed to create items.jsonl")?;
         }
         if !edges_path.exists() {
             File::create(&edges_path).context("Failed to create edges.jsonl")?;
+        }
+        if !events_path.exists() {
+            File::create(&events_path).context("Failed to create events.jsonl")?;
         }
 
         // Create SQLite database
@@ -121,6 +128,19 @@ impl Storage {
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS events (
+                    id TEXT PRIMARY KEY,
+                    kind TEXT NOT NULL,
+                    source_task TEXT,
+                    target_task TEXT,
+                    payload TEXT,
+                    timestamp TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_events_kind ON events(kind);
+                CREATE INDEX IF NOT EXISTS idx_events_source ON events(source_task);
+                CREATE INDEX IF NOT EXISTS idx_events_target ON events(target_task);
+                CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp);
             "#,
             )
             .context("Failed to initialize schema")?;
@@ -132,9 +152,11 @@ impl Storage {
     fn needs_rebuild(&self) -> Result<bool> {
         let items_path = self.root.join(ENGRAM_DIR).join(ITEMS_FILE);
         let edges_path = self.root.join(ENGRAM_DIR).join(EDGES_FILE);
+        let events_path = self.root.join(ENGRAM_DIR).join(EVENTS_FILE);
 
         let items_lines = count_lines(&items_path)?;
         let edges_lines = count_lines(&edges_path)?;
+        let events_lines = count_lines(&events_path)?;
 
         let stored_items: i64 = self
             .db
@@ -154,13 +176,25 @@ impl Storage {
             )
             .unwrap_or(0);
 
-        Ok(items_lines as i64 != stored_items || edges_lines as i64 != stored_edges)
+        let stored_events: i64 = self
+            .db
+            .query_row(
+                "SELECT COALESCE((SELECT value FROM meta WHERE key = 'jsonl_events_lines'), '0')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        Ok(items_lines as i64 != stored_items
+            || edges_lines as i64 != stored_edges
+            || events_lines as i64 != stored_events)
     }
 
     /// Rebuild SQLite cache from JSONL files.
     pub fn rebuild_from_jsonl(&mut self) -> Result<()> {
         let items_path = self.root.join(ENGRAM_DIR).join(ITEMS_FILE);
         let edges_path = self.root.join(ENGRAM_DIR).join(EDGES_FILE);
+        let events_path = self.root.join(ENGRAM_DIR).join(EVENTS_FILE);
 
         // Clear existing data
         self.db
@@ -169,6 +203,7 @@ impl Storage {
                 DELETE FROM labels;
                 DELETE FROM edges;
                 DELETE FROM items;
+                DELETE FROM events;
             "#,
             )
             .context("Failed to clear tables")?;
@@ -258,6 +293,44 @@ impl Storage {
             self.insert_edge_to_db(edge)?;
         }
 
+        // Read events (last occurrence wins based on id)
+        let mut events: HashMap<String, Event> = HashMap::new();
+        let mut events_line_count = 0;
+
+        if events_path.exists() {
+            let file = File::open(&events_path).context("Failed to open events.jsonl")?;
+            let reader = BufReader::new(file);
+
+            for line in reader.lines() {
+                events_line_count += 1;
+                let line = match line {
+                    Ok(l) => l,
+                    Err(e) => {
+                        log::warn!("Failed to read event line {}: {}", events_line_count, e);
+                        continue;
+                    }
+                };
+
+                if line.trim().is_empty() {
+                    continue;
+                }
+
+                match serde_json::from_str::<Event>(&line) {
+                    Ok(event) => {
+                        events.insert(event.id.clone(), event);
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to parse event at line {}: {}", events_line_count, e);
+                    }
+                }
+            }
+        }
+
+        // Insert events into SQLite
+        for event in events.values() {
+            self.insert_event_to_db(event)?;
+        }
+
         // Update metadata
         self.db.execute(
             "INSERT OR REPLACE INTO meta (key, value) VALUES ('jsonl_items_lines', ?)",
@@ -266,6 +339,10 @@ impl Storage {
         self.db.execute(
             "INSERT OR REPLACE INTO meta (key, value) VALUES ('jsonl_edges_lines', ?)",
             params![edges_line_count.to_string()],
+        )?;
+        self.db.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('jsonl_events_lines', ?)",
+            params![events_line_count.to_string()],
         )?;
 
         Ok(())
@@ -325,6 +402,26 @@ impl Storage {
             VALUES (?, ?, ?, ?)
             "#,
             params![edge.from_id, edge.to_id, kind_str, edge.created_at.to_rfc3339(),],
+        )?;
+
+        Ok(())
+    }
+
+    /// Insert an event into SQLite.
+    fn insert_event_to_db(&self, event: &Event) -> Result<()> {
+        self.db.execute(
+            r#"
+            INSERT OR REPLACE INTO events (id, kind, source_task, target_task, payload, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?)
+            "#,
+            params![
+                event.id,
+                event.kind,
+                event.source_task,
+                event.target_task,
+                event.payload.to_string(),
+                event.timestamp.to_rfc3339(),
+            ],
         )?;
 
         Ok(())
@@ -391,6 +488,160 @@ impl Storage {
         )?;
 
         Ok(())
+    }
+
+    /// Append an event to the JSONL file.
+    pub fn append_event(&mut self, event: &Event) -> Result<()> {
+        let events_path = self.root.join(ENGRAM_DIR).join(EVENTS_FILE);
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&events_path)
+            .context("Failed to open events.jsonl for append")?;
+
+        let json = serde_json::to_string(event).context("Failed to serialize event")?;
+        writeln!(file, "{}", json).context("Failed to write to events.jsonl")?;
+        file.sync_all().context("Failed to sync events.jsonl")?;
+
+        // Update SQLite cache
+        self.insert_event_to_db(event)?;
+
+        // Update line count
+        self.db.execute(
+            "UPDATE meta SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key = 'jsonl_events_lines'",
+            [],
+        )?;
+
+        Ok(())
+    }
+
+    /// Get an event by ID.
+    pub fn get_event(&self, id: &str) -> Result<Option<Event>> {
+        let mut stmt = self.db.prepare(
+            r#"
+            SELECT id, kind, source_task, target_task, payload, timestamp
+            FROM events WHERE id = ?
+            "#,
+        )?;
+
+        let event = stmt.query_row(params![id], Self::row_to_event).optional()?;
+
+        Ok(event)
+    }
+
+    /// Query events with filters.
+    pub fn query_events(&self, filter: &EventFilter) -> Result<Vec<Event>> {
+        let mut sql = String::from(
+            r#"
+            SELECT id, kind, source_task, target_task, payload, timestamp
+            FROM events
+            "#,
+        );
+
+        let mut conditions = Vec::new();
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        // Kind filter
+        if let Some(ref kinds) = filter.kinds
+            && !kinds.is_empty()
+        {
+            let placeholders: Vec<_> = kinds.iter().map(|_| "?").collect();
+            conditions.push(format!("kind IN ({})", placeholders.join(", ")));
+            for kind in kinds {
+                params.push(Box::new(kind.clone()));
+            }
+        }
+
+        // Source task filter
+        if let Some(ref source) = filter.source_task {
+            conditions.push("source_task = ?".to_string());
+            params.push(Box::new(source.clone()));
+        }
+
+        // Target task filter
+        if let Some(ref target) = filter.target_task {
+            conditions.push("target_task = ?".to_string());
+            params.push(Box::new(target.clone()));
+        }
+
+        // Since filter
+        if let Some(since) = filter.since {
+            conditions.push("timestamp >= ?".to_string());
+            params.push(Box::new(since.to_rfc3339()));
+        }
+
+        // Build WHERE clause
+        if !conditions.is_empty() {
+            sql.push_str("WHERE ");
+            sql.push_str(&conditions.join(" AND "));
+        }
+
+        // Order by timestamp descending (most recent first)
+        sql.push_str(" ORDER BY timestamp DESC");
+
+        // Limit
+        if let Some(limit) = filter.limit {
+            sql.push_str(&format!(" LIMIT {}", limit));
+        }
+
+        let mut stmt = self.db.prepare(&sql)?;
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let events: Vec<Event> = stmt
+            .query_map(param_refs.as_slice(), Self::row_to_event)?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok(events)
+    }
+
+    /// Get recent events.
+    pub fn recent_events(&self, limit: usize) -> Result<Vec<Event>> {
+        self.query_events(&EventFilter::new().limit(limit))
+    }
+
+    /// Get events for a specific task (as source or target).
+    pub fn task_events(&self, task_id: &str, limit: usize) -> Result<Vec<Event>> {
+        let mut stmt = self.db.prepare(
+            r#"
+            SELECT id, kind, source_task, target_task, payload, timestamp
+            FROM events
+            WHERE source_task = ? OR target_task = ?
+            ORDER BY timestamp DESC
+            LIMIT ?
+            "#,
+        )?;
+
+        let events: Vec<Event> = stmt
+            .query_map(params![task_id, task_id, limit as i64], Self::row_to_event)?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok(events)
+    }
+
+    /// Count all events in the store.
+    pub fn count_all_events(&self) -> Result<usize> {
+        let count: i64 = self.db.query_row("SELECT COUNT(*) FROM events", [], |row| row.get(0))?;
+        Ok(count as usize)
+    }
+
+    /// Convert a database row to an Event.
+    fn row_to_event(row: &rusqlite::Row) -> rusqlite::Result<Event> {
+        let timestamp_str: String = row.get(5)?;
+        let payload_str: Option<String> = row.get(4)?;
+
+        Ok(Event {
+            id: row.get(0)?,
+            kind: row.get(1)?,
+            source_task: row.get(2)?,
+            target_task: row.get(3)?,
+            payload: payload_str
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or(serde_json::Value::Null),
+            timestamp: chrono::DateTime::parse_from_rfc3339(&timestamp_str)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .unwrap_or_else(|_| chrono::Utc::now()),
+        })
     }
 
     /// Get an item by ID.
@@ -881,6 +1132,7 @@ mod tests {
         assert!(temp_dir.path().join(ENGRAM_DIR).exists());
         assert!(temp_dir.path().join(ENGRAM_DIR).join(ITEMS_FILE).exists());
         assert!(temp_dir.path().join(ENGRAM_DIR).join(EDGES_FILE).exists());
+        assert!(temp_dir.path().join(ENGRAM_DIR).join(EVENTS_FILE).exists());
         assert!(temp_dir.path().join(ENGRAM_DIR).join(DB_FILE).exists());
     }
 
@@ -992,5 +1244,87 @@ mod tests {
         let ready = storage.ready().unwrap();
         assert_eq!(ready.len(), 1);
         assert_eq!(ready[0].id, "eg-blocker001");
+    }
+
+    #[test]
+    fn test_append_and_get_event() {
+        let (_temp_dir, mut storage) = setup_test_storage();
+
+        let now = chrono::Utc::now();
+        let event = Event {
+            id: "eg-evt-test0001".to_string(),
+            kind: "task_started".to_string(),
+            source_task: Some("eg-abc123".to_string()),
+            target_task: None,
+            payload: serde_json::json!({"summary": "Test"}),
+            timestamp: now,
+        };
+
+        storage.append_event(&event).unwrap();
+
+        let retrieved = storage.get_event("eg-evt-test0001").unwrap();
+        assert!(retrieved.is_some());
+        let retrieved = retrieved.unwrap();
+        assert_eq!(retrieved.kind, "task_started");
+        assert_eq!(retrieved.source_task, Some("eg-abc123".to_string()));
+    }
+
+    #[test]
+    fn test_query_events() {
+        let (_temp_dir, mut storage) = setup_test_storage();
+
+        let now = chrono::Utc::now();
+        for i in 0..5 {
+            let event = Event {
+                id: format!("eg-evt-test000{}", i),
+                kind: if i % 2 == 0 {
+                    "task_started".to_string()
+                } else {
+                    "task_completed".to_string()
+                },
+                source_task: Some(format!("eg-task{}", i)),
+                target_task: None,
+                payload: serde_json::json!({}),
+                timestamp: now + chrono::Duration::seconds(i),
+            };
+            storage.append_event(&event).unwrap();
+        }
+
+        // Query all
+        let all = storage.recent_events(100).unwrap();
+        assert_eq!(all.len(), 5);
+
+        // Query by kind
+        let started = storage.query_events(&EventFilter::new().kind("task_started")).unwrap();
+        assert_eq!(started.len(), 3);
+
+        // Query by source task
+        let task_events = storage.task_events("eg-task2", 100).unwrap();
+        assert_eq!(task_events.len(), 1);
+        assert_eq!(task_events[0].id, "eg-evt-test0002");
+
+        // Query with limit
+        let limited = storage.recent_events(2).unwrap();
+        assert_eq!(limited.len(), 2);
+    }
+
+    #[test]
+    fn test_count_events() {
+        let (_temp_dir, mut storage) = setup_test_storage();
+
+        let now = chrono::Utc::now();
+        for i in 0..3 {
+            let event = Event {
+                id: format!("eg-evt-count0{}", i),
+                kind: "test_event".to_string(),
+                source_task: None,
+                target_task: None,
+                payload: serde_json::Value::Null,
+                timestamp: now,
+            };
+            storage.append_event(&event).unwrap();
+        }
+
+        assert_eq!(storage.count_all_events().unwrap(), 3);
     }
 }

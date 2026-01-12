@@ -20,6 +20,22 @@ pub fn generate_id(title: &str, created_at: DateTime<Utc>) -> String {
     )
 }
 
+/// Generate a unique event ID from kind + entropy.
+/// Format: "eg-evt-" + 10 hex chars of SHA256(kind + timestamp + random)
+pub fn generate_event_id(kind: &str, timestamp: DateTime<Utc>) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(kind.as_bytes());
+    hasher.update(timestamp.timestamp_nanos_opt().unwrap_or(0).to_le_bytes());
+    // Add 8 bytes of randomness to prevent collisions
+    hasher.update(rand::rng().random::<[u8; 8]>());
+    let hash = hasher.finalize();
+    // 10 hex chars = 40 bits = ~1 trillion values
+    format!(
+        "eg-evt-{:010x}",
+        u64::from_be_bytes([hash[0], hash[1], hash[2], hash[3], hash[4], 0, 0, 0]) >> 24
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -45,6 +61,22 @@ mod tests {
         let now = Utc::now();
         let id1 = generate_id("Title one", now);
         let id2 = generate_id("Title two", now);
+        assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn test_generate_event_id_format() {
+        let id = generate_event_id("task_started", Utc::now());
+        assert!(id.starts_with("eg-evt-"));
+        assert_eq!(id.len(), 17); // "eg-evt-" + 10 hex chars
+    }
+
+    #[test]
+    fn test_generate_event_id_uniqueness() {
+        let now = Utc::now();
+        let id1 = generate_event_id("task_started", now);
+        let id2 = generate_event_id("task_started", now);
+        // Due to random component, same inputs should produce different IDs
         assert_ne!(id1, id2);
     }
 }
